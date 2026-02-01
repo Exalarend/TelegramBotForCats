@@ -1,0 +1,7 @@
+python-telegram-bot[job-queue]==21.11
+python-dotenv==1.0.1
+PyYAML
+pystray>=0.19.5
+Pillow>=10.0.0
+pytest
+ruff

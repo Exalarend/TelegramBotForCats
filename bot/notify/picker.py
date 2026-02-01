@@ -1,0 +1,83 @@
+import os
+import random
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PickedContent:
+    text: str
+    image_ref: str | None
+    image_ref_type: str | None
+    image_option_id: int | None
+
+
+def weighted_choice(options: list[dict], *, weight_key: str) -> dict | None:
+    if not options:
+        return None
+    total = 0.0
+    for o in options:
+        w = float(o.get(weight_key, 1.0))
+        if w > 0:
+            total += w
+    if total <= 0:
+        return options[0]
+    r = random.random() * total
+    upto = 0.0
+    for o in options:
+        w = float(o.get(weight_key, 1.0))
+        if w <= 0:
+            continue
+        upto += w
+        if upto >= r:
+            return o
+    return options[-1]
+
+
+def pick_system_content(
+    *,
+    rule: dict,
+    text_options: list[dict],
+    image_options: list[dict],
+) -> PickedContent:
+    """
+    Implements: pick image (weighted) -> pick text from that image's set (weighted).
+    """
+    images = [i for i in image_options if _is_image_option_available(str(i.get("ref")), str(i.get("ref_type")))]
+
+    picked_image = weighted_choice(images, weight_key="weight") if images else None
+
+    image_ref = None
+    image_ref_type = None
+    image_option_id = None
+    if picked_image:
+        image_ref = str(picked_image.get("ref"))
+        image_ref_type = str(picked_image.get("ref_type") or "file_id")
+        image_option_id = int(picked_image.get("id"))
+
+    candidate_texts: list[dict] = []
+    if image_option_id is not None:
+        candidate_texts = [t for t in text_options if t.get("image_option_id") == image_option_id]
+    if not candidate_texts:
+        candidate_texts = [t for t in text_options if t.get("image_option_id") is None] or text_options
+    picked_text = weighted_choice(candidate_texts, weight_key="weight") if candidate_texts else None
+    text = str((picked_text or {}).get("text") or "")
+
+    return PickedContent(
+        text=text,
+        image_ref=image_ref,
+        image_ref_type=image_ref_type,
+        image_option_id=image_option_id,
+    )
+
+
+def _is_image_option_available(ref: str, ref_type: str) -> bool:
+    if not ref:
+        return False
+    if ref_type in {"file_id", "url"}:
+        return True
+    if ref_type == "path":
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        abs_path = os.path.abspath(os.path.join(repo_root, ref))
+        return os.path.exists(abs_path)
+    return True
+
