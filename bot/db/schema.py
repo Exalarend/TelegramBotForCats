@@ -105,6 +105,10 @@ def ensure_schema(*, db_path: str, default_timezone: str) -> None:
             con.execute("ALTER TABLE rules ADD COLUMN text_probability REAL NOT NULL DEFAULT 1.0")
         if "image_probability" not in rule_cols:
             con.execute("ALTER TABLE rules ADD COLUMN image_probability REAL NOT NULL DEFAULT 0.0")
+        if "user_customized" not in rule_cols:
+            con.execute("ALTER TABLE rules ADD COLUMN user_customized INTEGER NOT NULL DEFAULT 0")
+        if "sort_order" not in rule_cols:
+            con.execute("ALTER TABLE rules ADD COLUMN sort_order INTEGER")
 
         con.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_chat_system_key ON rules(chat_id, system_key) WHERE system_key IS NOT NULL"

@@ -1,0 +1,27 @@
+# Большая красная кнопка — древовидное меню.
+# Узел с children = папка (подменю), узел с images = лист (отправка картинки + текста).
+# Структура images аналогична system_notifications.yaml: ref, ref_type, weight, texts.
+
+buttons:
+  # Папка — подменю с вложенными кнопками
+  - key: ministers
+    title: "Вышел не тот министр"
+    children:
+      - key: saturday_work
+        title: "Нужен Министр рабочей субботы"
+        images:
+          - ref: "assets/system/Saturday_work_1.jpg"
+            ref_type: path
+            weight: 30
+            texts:
+              - text: "Когда я устраивался я надеялся, что меня никогда не вызовут..."
+                weight: 5
+      - key: sunday
+        title: "Нужен Министр рабочего воскресенья"
+        images:
+          - ref: "assets/system/Sunday_work_1.jpg"
+            ref_type: path
+            weight: 30
+            texts:
+              - text: "Воскресенье — день отдыха говорили они..."
+                weight: 5

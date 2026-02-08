@@ -70,6 +70,42 @@ def pick_system_content(
     )
 
 
+def pick_big_red_content(button) -> PickedContent:
+    """
+    Pick random image (weighted) then random text from that image (weighted).
+    Works with BigRedButton from bot.system.big_red_loader.
+    """
+    images = [
+        {"ref": img.ref, "ref_type": img.ref_type, "weight": img.weight, "texts": img.texts}
+        for img in button.images
+        if _is_image_option_available(img.ref, img.ref_type)
+    ]
+    picked_image_dict = weighted_choice(images, weight_key="weight") if images else None
+
+    image_ref = None
+    image_ref_type = None
+    candidate_texts: list[dict] = []
+    if picked_image_dict:
+        image_ref = str(picked_image_dict.get("ref"))
+        image_ref_type = str(picked_image_dict.get("ref_type") or "file_id")
+        texts_list = picked_image_dict.get("texts") or []
+        for t in texts_list:
+            text_val = getattr(t, "text", None) if hasattr(t, "text") else (t.get("text") if isinstance(t, dict) else None)
+            weight_val = getattr(t, "weight", 1.0) if hasattr(t, "weight") else (t.get("weight", 1.0) if isinstance(t, dict) else 1.0)
+            if text_val:
+                candidate_texts.append({"text": str(text_val), "weight": float(weight_val)})
+
+    picked_text = weighted_choice(candidate_texts, weight_key="weight") if candidate_texts else None
+    text = str((picked_text or {}).get("text") or "")
+
+    return PickedContent(
+        text=text,
+        image_ref=image_ref,
+        image_ref_type=image_ref_type,
+        image_option_id=None,
+    )
+
+
 def _is_image_option_available(ref: str, ref_type: str) -> bool:
     if not ref:
         return False

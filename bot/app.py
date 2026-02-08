@@ -49,6 +49,16 @@ def build_app(config: BotConfig, *, logger: logging.Logger) -> Application:
         app.bot_data["system_rules"] = []
         logger.exception("Failed to load system notifications YAML: %s", config.system_yaml_path)
 
+    # load Big Red Button config
+    try:
+        from bot.system.big_red_loader import load_big_red_buttons
+
+        app.bot_data["big_red_buttons"] = load_big_red_buttons(config.big_red_button_yaml_path)
+        logger.info("Loaded Big Red Button YAML: %s (%s buttons)", config.big_red_button_yaml_path, len(app.bot_data["big_red_buttons"]))
+    except Exception:
+        app.bot_data["big_red_buttons"] = []
+        logger.exception("Failed to load Big Red Button YAML: %s", config.big_red_button_yaml_path)
+
     # handlers
     app.add_handler(CommandHandler("start", message_handlers.cmd_start))
     app.add_handler(CommandHandler("menu", message_handlers.cmd_menu))

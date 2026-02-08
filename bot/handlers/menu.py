@@ -10,6 +10,9 @@ from time import perf_counter
 from bot.db import repo
 from bot.handlers import state as flow_state
 from bot.handlers.utils import check_admin_in_groups, is_group, tg_call_with_retries
+from bot.notify.picker import pick_big_red_content
+from bot.notify.sender import SendOptions, TelegramSender
+from bot.system.big_red_loader import find_node_by_path, get_nodes_at_path
 from bot.scheduler import reschedule_chat_jobs, reschedule_rule_job, send_rule_notification
 from bot.utils.rules_format import fmt_rule_name, fmt_rule_schedule
 
@@ -28,9 +31,31 @@ def kb_main(chat_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📅 Уведомления", callback_data=f"rules:{chat_id}")],
             [InlineKeyboardButton(meta_label, callback_data=f"toggle_meta:{chat_id}")],
             [InlineKeyboardButton(enabled_label, callback_data=f"toggle_chat:{chat_id}")],
+            [InlineKeyboardButton("🔴 Большая красная кнопка", callback_data=f"big_red:{chat_id}")],
             [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
         ]
     )
+
+
+def kb_big_red_button(chat_id: int, root_nodes: list, path: str) -> InlineKeyboardMarkup:
+    """Keyboard for Big Red Button tree. path='' = root, path='key1.key2' = nested."""
+    from bot.system.big_red_loader import get_nodes_at_path
+
+    nodes = get_nodes_at_path(root_nodes, path)
+    rows: list[list[InlineKeyboardButton]] = []
+    for node in nodes:
+        full_path = f"{path}.{node.key}" if path else node.key
+        if node.is_folder():
+            rows.append([InlineKeyboardButton(f"📁 {node.title}", callback_data=f"big_red:{chat_id}:{full_path}")])
+        else:
+            rows.append([InlineKeyboardButton(node.title, callback_data=f"big_red_press:{chat_id}:{full_path}")])
+    parent_path = ".".join(path.split(".")[:-1]) if path else ""
+    if path:
+        back_data = f"big_red:{chat_id}:{parent_path}" if parent_path else f"big_red:{chat_id}"
+    else:
+        back_data = f"menu:{chat_id}"
+    rows.append([InlineKeyboardButton("⬅️ Назад", callback_data=back_data)])
+    return InlineKeyboardMarkup(rows)
 
 
 def kb_rules(chat_id: int, rules: list[dict]) -> InlineKeyboardMarkup:
@@ -307,7 +332,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "Меню:\n"
             "- 📅 «Уведомления» — список напоминаний, добавление/редактирование\n"
             "- ✅/⬜ «Инфо (дата/время)» — показывать/скрывать «шапку» (дата, время, TZ, название и расписание) уведомлений\n"
-            "- 🟢/🔴 «Вкл/Выкл» — включить/выключить отправку уведомлений целиком для чата\n\n"
+            "- 🟢/🔴 «Вкл/Выкл» — включить/выключить отправку уведомлений целиком для чата\n"
+            "- 🔴 «Большая красная кнопка» — меню с кнопками (случайная картинка + текст)\n\n"
             "Правила:\n"
             "- Обычные уведомлени: можно менять 🏷 название, ✍️ текст, 🖼 картинку, ⏱ время/🔁 интервал, вкл/выкл, удалять\n"
             "- ⭐ Системные уведомления: можно только ⏱/🔁 и вкл/выкл (название/текст/картинка задаются самим министерством)\n\n"
@@ -354,6 +380,58 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         repo.upsert_chat(chat_id)
         rules = [rule_to_view(r) for r in repo.get_rules(chat_id)]
         await edit_text("Правила уведомлений:", reply_markup=kb_rules(chat_id, rules))
+        return
+
+    if action == "big_red":
+        chat_id = int(parts[1])
+        path = parts[2] if len(parts) > 2 else ""
+        root_nodes = context.application.bot_data.get("big_red_buttons") or []
+        if not root_nodes:
+            await edit_text("Большая красная кнопка пока не настроена.", reply_markup=kb_main(chat_id))
+            return
+        await edit_text("🔴 Большая красная кнопка\n\nВыберите кнопку — получите случайную картинку и текст:", reply_markup=kb_big_red_button(chat_id, root_nodes, path))
+        return
+
+    if action == "big_red_press":
+        chat_id = int(parts[1])
+        node_path = parts[2] if len(parts) > 2 else ""
+        root_nodes = context.application.bot_data.get("big_red_buttons") or []
+        btn = find_node_by_path(root_nodes, node_path)
+        if not btn or not btn.is_leaf():
+            root_nodes = context.application.bot_data.get("big_red_buttons") or []
+            parent_path = ".".join(node_path.rsplit(".", 1)[:-1]) if "." in node_path else ""
+            await edit_text("Кнопка не найдена.", reply_markup=kb_big_red_button(chat_id, root_nodes, parent_path))
+            return
+        picked = pick_big_red_content(btn)
+        send_opts = context.application.bot_data.get("send_options")
+        if not isinstance(send_opts, SendOptions):
+            send_opts = SendOptions(timeout_seconds=20, retry_attempts=4)
+        sender = TelegramSender(bot=context.bot, options=send_opts, logger=logger)
+        text = (picked.text or "").strip()
+        try:
+            if picked.image_ref:
+                await sender.send_photo(
+                    chat_id=chat_id,
+                    ref=str(picked.image_ref),
+                    ref_type=str(picked.image_ref_type or "file_id"),
+                    caption=text if text else None,
+                    parse_mode=ParseMode.HTML if text else None,
+                )
+            elif text:
+                await sender.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        except Exception:
+            logger.exception("Failed to send big_red content chat_id=%s path=%s", chat_id, node_path)
+            try:
+                await q.answer("Не удалось отправить сообщение.", show_alert=True)
+            except Exception:
+                pass
+            return
+        # Delete menu message after sending content
+        try:
+            if q.message:
+                await q.message.delete()
+        except Exception as e:
+            logger.debug("Could not delete big_red menu message: %s", e)
         return
 
     if action == "rule_add":

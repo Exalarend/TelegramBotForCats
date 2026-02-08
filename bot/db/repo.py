@@ -138,7 +138,7 @@ def get_rules(chat_id: int) -> list[dict]:
                    is_system, system_key, text_probability, image_probability, enabled
             FROM rules
             WHERE chat_id = ?
-            ORDER BY id ASC
+            ORDER BY COALESCE(sort_order, 999999) ASC, id ASC
             """,
             (chat_id,),
         ).fetchall()
@@ -241,10 +241,13 @@ def ensure_system_rule_weekly(
     days: list[int],
     time_hhmm: str,
     images: list[dict],
+    enabled_by_default: bool = True,
+    sort_order: int = 0,
 ) -> int:
     """
-    Backward-compatible helper (used by current code).
     Creates a system (default) weekly rule if it doesn't exist and syncs its pools.
+    - days: always from config
+    - time_hhmm, enabled: from config unless user_customized (user changed via UI)
 
     images: [
       {"ref": str, "ref_type": "file_id"|"path"|"url", "weight": float, "texts": [(text, weight), ...]},
@@ -256,27 +259,26 @@ def ensure_system_rule_weekly(
     now_ts = int(time.time())
     with _conn() as con:
         row = con.execute(
-            "SELECT id, kind, days, time_hhmm FROM rules WHERE chat_id = ? AND system_key = ?",
+            "SELECT id, kind, days, time_hhmm, user_customized FROM rules WHERE chat_id = ? AND system_key = ?",
             (chat_id, system_key),
         ).fetchone()
         if row:
             rule_id = int(row["id"])
-            # System rules:
-            # - days are always driven by YAML (non-editable in UI) -> overwrite on sync
-            # - time_hhmm is user-editable -> do NOT overwrite if already set
+            user_customized = int(row["user_customized"] or 0) == 1
+            # System rules: days always from config; time/enabled only if user didn't customize
             con.execute(
                 """
                 UPDATE rules
-                SET title = ?, text_probability = 1.0, image_probability = 1.0, is_system = 1
+                SET title = ?, text_probability = 1.0, image_probability = 1.0, is_system = 1, sort_order = ?
                 WHERE id = ? AND chat_id = ?
                 """,
-                (str(title), rule_id, chat_id),
+                (str(title), sort_order, rule_id, chat_id),
             )
             con.execute("UPDATE rules SET days = ? WHERE id = ? AND chat_id = ?", (days_s, rule_id, chat_id))
-            if not (row["time_hhmm"] or ""):
+            if not user_customized:
                 con.execute(
-                    "UPDATE rules SET time_hhmm = ? WHERE id = ? AND chat_id = ?",
-                    (time_hhmm, rule_id, chat_id),
+                    "UPDATE rules SET time_hhmm = ?, enabled = ? WHERE id = ? AND chat_id = ?",
+                    (time_hhmm, 1 if enabled_by_default else 0, rule_id, chat_id),
                 )
             # Replace pools to match the current defaults.
             con.execute("DELETE FROM rule_text_options WHERE rule_id = ?", (rule_id,))
@@ -304,11 +306,11 @@ def ensure_system_rule_weekly(
               chat_id, title, kind, days, time_hhmm, interval_minutes,
               created_at_ts, last_sent_at_ts,
               message_text, image_file_id,
-              is_system, system_key, text_probability, image_probability, enabled
+              is_system, system_key, text_probability, image_probability, enabled, sort_order
             )
-            VALUES(?, ?, 'weekly', ?, ?, NULL, ?, NULL, '', NULL, 1, ?, 1.0, 1.0, 1)
+            VALUES(?, ?, 'weekly', ?, ?, NULL, ?, NULL, '', NULL, 1, ?, 1.0, 1.0, ?, ?)
             """,
-            (chat_id, str(title), days_s, time_hhmm, now_ts, system_key),
+            (chat_id, str(title), days_s, time_hhmm, now_ts, system_key, 1 if enabled_by_default else 0, sort_order),
         )
         rule_id = int(cur.lastrowid)
         for img in images:
@@ -336,28 +338,35 @@ def ensure_system_rule_interval(
     title: str,
     interval_minutes: int,
     images: list[dict],
+    enabled_by_default: bool = True,
+    sort_order: int = 0,
 ) -> int:
+    """
+    Creates a system interval rule if it doesn't exist and syncs its pools.
+    - interval_minutes, enabled: from config unless user_customized.
+    """
     upsert_chat(chat_id)
     now_ts = int(time.time())
     with _conn() as con:
         row = con.execute(
-            "SELECT id, kind, interval_minutes FROM rules WHERE chat_id = ? AND system_key = ?",
+            "SELECT id, kind, interval_minutes, user_customized FROM rules WHERE chat_id = ? AND system_key = ?",
             (chat_id, system_key),
         ).fetchone()
         if row:
             rule_id = int(row["id"])
+            user_customized = int(row["user_customized"] or 0) == 1
             con.execute(
                 """
                 UPDATE rules
-                SET title = ?, text_probability = 1.0, image_probability = 1.0, is_system = 1
+                SET title = ?, text_probability = 1.0, image_probability = 1.0, is_system = 1, sort_order = ?
                 WHERE id = ? AND chat_id = ?
                 """,
-                (str(title), rule_id, chat_id),
+                (str(title), sort_order, rule_id, chat_id),
             )
-            if row["interval_minutes"] is None:
+            if not user_customized:
                 con.execute(
-                    "UPDATE rules SET interval_minutes = ? WHERE id = ? AND chat_id = ?",
-                    (int(interval_minutes), rule_id, chat_id),
+                    "UPDATE rules SET interval_minutes = ?, enabled = ? WHERE id = ? AND chat_id = ?",
+                    (int(interval_minutes), 1 if enabled_by_default else 0, rule_id, chat_id),
                 )
             con.execute("DELETE FROM rule_text_options WHERE rule_id = ?", (rule_id,))
             con.execute("DELETE FROM rule_image_options WHERE rule_id = ?", (rule_id,))
@@ -384,11 +393,11 @@ def ensure_system_rule_interval(
               chat_id, title, kind, days, time_hhmm, interval_minutes,
               created_at_ts, last_sent_at_ts,
               message_text, image_file_id,
-              is_system, system_key, text_probability, image_probability, enabled
+              is_system, system_key, text_probability, image_probability, enabled, sort_order
             )
-            VALUES(?, ?, 'interval', NULL, NULL, ?, ?, NULL, '', NULL, 1, ?, 1.0, 1.0, 1)
+            VALUES(?, ?, 'interval', NULL, NULL, ?, ?, NULL, '', NULL, 1, ?, 1.0, 1.0, ?, ?)
             """,
-            (chat_id, str(title), int(interval_minutes), now_ts, system_key),
+            (chat_id, str(title), int(interval_minutes), now_ts, system_key, 1 if enabled_by_default else 0, sort_order),
         )
         rule_id = int(cur.lastrowid)
         for img in images:
@@ -490,7 +499,10 @@ def set_rule_time_hhmm(chat_id: int, rule_id: int, time_hhmm: str) -> None:
     upsert_chat(chat_id)
     with _conn() as con:
         con.execute(
-            "UPDATE rules SET time_hhmm = ? WHERE chat_id = ? AND id = ? AND kind = 'weekly'",
+            """
+            UPDATE rules SET time_hhmm = ?, user_customized = CASE WHEN is_system = 1 THEN 1 ELSE user_customized END
+            WHERE chat_id = ? AND id = ? AND kind = 'weekly'
+            """,
             (time_hhmm, chat_id, rule_id),
         )
         con.commit()
@@ -500,7 +512,10 @@ def set_rule_interval_minutes(chat_id: int, rule_id: int, interval_minutes: int)
     upsert_chat(chat_id)
     with _conn() as con:
         con.execute(
-            "UPDATE rules SET interval_minutes = ? WHERE chat_id = ? AND id = ? AND kind = 'interval'",
+            """
+            UPDATE rules SET interval_minutes = ?, user_customized = CASE WHEN is_system = 1 THEN 1 ELSE user_customized END
+            WHERE chat_id = ? AND id = ? AND kind = 'interval'
+            """,
             (int(interval_minutes), chat_id, rule_id),
         )
         con.commit()
@@ -514,7 +529,10 @@ def toggle_rule_enabled(chat_id: int, rule_id: int) -> None:
             return
         enabled = int(r["enabled"])
         con.execute(
-            "UPDATE rules SET enabled = ? WHERE chat_id = ? AND id = ?",
+            """
+            UPDATE rules SET enabled = ?, user_customized = CASE WHEN is_system = 1 THEN 1 ELSE user_customized END
+            WHERE chat_id = ? AND id = ?
+            """,
             (0 if enabled else 1, chat_id, rule_id),
         )
         con.commit()

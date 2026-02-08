@@ -9,12 +9,35 @@ rules:
     images:
       - ref: "assets/system/Garfield_1.jpeg"
         ref_type: path
-        weight: 60
+        weight: 80
         texts:
           - text: "Сегодня понедельник..."
             weight: 10
           - text: "Ну вы поняли..."
             weight: 2
+      - ref: "assets/system/Fake_garfield_1.png"
+        ref_type: path
+        weight: 20
+        texts:
+          - text: "Уверен, никто даже не заметит."
+            weight: 10
+          - text: "..."
+            weight: 2
+  
+  - system_key: ministry_thusday
+    title: "Министр вторника"
+    kind: weekly
+    enabled_by_default: true
+    schedule:
+      days: [1] # Thusday (python weekday: Mon=0..Sun=6)
+      time_hhmm: "10:00"
+    images:
+      - ref: "assets/system/Gav_1.png"
+        ref_type: path
+        weight: 60
+        texts:
+          - text: "Ура, вторник!"
+            weight: 10
 
   - system_key: ministry_wednesday
     title: "Министр среды"
@@ -80,13 +103,36 @@ rules:
       days: [5] # Saturday (python weekday: Mon=0..Sun=6)
       time_hhmm: "10:00"
     images:
-      - ref: "assets/system/Puss_in_Boots_1.jpg"
+      - ref: "assets/system/Puss_in_Boots_1.png"
         ref_type: path
         weight: 60
         texts:
           - text: "Сегодня суббота!"
             weight: 5
           - text: "Добро пожаловать в субботу господа и дамы!"
+            weight: 5
+      - ref: "assets/system/Puss_in_boots_2.png"
+        ref_type: path
+        weight: 60
+        texts:
+          - text: "Сегодня суббота!"
+            weight: 5
+          - text: "Наконец-то Выходные!"
+            weight: 5
+  
+  - system_key: ministry_sunday
+    title: "Министр воскресенья"
+    kind: weekly
+    enabled_by_default: true
+    schedule:
+      days: [6] # Sunday (python weekday: Mon=0..Sun=6)
+      time_hhmm: "10:00"
+    images:
+      - ref: "assets/system/Cheshir_1.png"
+        ref_type: path
+        weight: 30
+        texts:
+          - text: "Сегодня воскресенье!"
             weight: 5
 
   - system_key: ministry_lunch
@@ -99,7 +145,7 @@ rules:
     images:
       - ref: "assets/system/garfield_lunch_1.png"
         ref_type: path
-        weight: 70
+        weight: 30
         texts:
           - text: "Давайте там быстрее..."
             weight: 9
@@ -149,18 +195,3 @@ rules:
             weight: 3
           - text: "Обеду время, работе час!"
             weight: 1
-
-  - system_key: ministry_hunter
-    title: "Поиск Министра"
-    kind: weekly
-    enabled_by_default: true
-    schedule:
-      days: [1, 6] # Monday, Saturday (python weekday: Mon=0..Sun=6)
-      time_hhmm: "10:00"
-    images:
-      - ref: "assets/system/Hunting_1.png"
-        ref_type: path
-        weight: 60
-        texts:
-          - text: "ВНИМАНИЕ! ВНИМАНИЕ! ВНИМАНИЕ!\nТребуется Министр в Министерство не твоих собачьих дел!\nПисать ему: @exalarend"
-            weight: 10
