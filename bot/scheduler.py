@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from telegram.constants import ParseMode
 from telegram.helpers import escape
-from telegram.error import ChatMigrated
+from telegram.error import ChatMigrated, Forbidden
 from telegram.ext import Application, ContextTypes
 
 from bot.db import repo
@@ -97,6 +97,20 @@ def _chat_lock(app: Application, chat_id: int) -> asyncio.Lock:
         lock = asyncio.Lock()
         locks[int(chat_id)] = lock
     return lock
+
+
+async def _get_chat_title(bot, chat_id: int, logger: logging.Logger) -> str:
+    """
+    Best-effort chat title resolution for logging failures.
+    """
+    try:
+        chat = await bot.get_chat(chat_id)
+    except Exception:
+        logger.debug("Failed to fetch chat title chat_id=%s", chat_id, exc_info=True)
+        return ""
+
+    title = getattr(chat, "title", None) or getattr(chat, "full_name", None) or getattr(chat, "username", None)
+    return str(title) if title else ""
 
 
 async def reschedule_chat_jobs(app: Application, chat_id: int, *, logger: logging.Logger) -> None:
@@ -328,8 +342,49 @@ async def send_notification_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         logger.exception("ChatMigrated without new_chat_id chat_id=%s rule_id=%s", chat_id, rule_id)
         return
+    except Forbidden as e:
+        # Handle cases when Telegram explicitly forbids sending messages.
+        chat_title = await _get_chat_title(context.bot, chat_id, logger)
+        msg = str(e or "")  # telegram.error.Forbidden(message)
+        is_blocked_by_user = "bot was blocked by the user" in msg.lower()
+
+        if is_blocked_by_user:
+            logger.error(
+                "Failed to deliver notification: bot blocked by user chat_id=%s chat_title=%r rule_id=%s",
+                chat_id,
+                chat_title or "",
+                rule_id,
+            )
+            # Disable this chat completely so we never try to send to it again.
+            try:
+                repo.set_chat_enabled(chat_id, 0)
+            except Exception:
+                logger.exception("Failed to disable chat after bot was blocked chat_id=%s", chat_id)
+
+            # Reschedule jobs to remove all rule / retry jobs for this chat.
+            try:
+                await reschedule_chat_jobs(context.application, chat_id, logger=logger)
+            except Exception:
+                logger.exception("Failed to reschedule jobs after disabling blocked chat chat_id=%s", chat_id)
+
+            return
+
+        logger.error(
+            "Forbidden when delivering notification chat_id=%s chat_title=%r rule_id=%s: %s",
+            chat_id,
+            chat_title or "",
+            rule_id,
+            msg,
+        )
+        return
     except Exception:
-        logger.exception("Failed to deliver notification chat_id=%s rule_id=%s", chat_id, rule_id)
+        chat_title = await _get_chat_title(context.bot, chat_id, logger)
+        logger.exception(
+            "Failed to deliver notification chat_id=%s chat_title=%r rule_id=%s",
+            chat_id,
+            chat_title or "",
+            rule_id,
+        )
 
     # Failure handling: schedule short retries.
     if rule.get("kind") == "interval":
